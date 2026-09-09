@@ -117,6 +117,16 @@
             background: #555;
         }
 
+        .player-transport button.active-loop {
+            background: #69d36f;
+            color: #111;
+            border-color: #55b55b;
+        }
+
+        .player-transport button.active-loop:hover {
+            background: #7ae480;
+        }
+
         .player-transport button:disabled {
             opacity: 0.4;
             cursor: default;
@@ -412,6 +422,10 @@
             ⏹
         </button>
 
+        <button id="btnLoop" class="active-loop" title="Toggle Loop">
+            🔁
+        </button>
+
         <input type="range"
             id="playerTimeline"
             min="0" max="1000" value="0"
@@ -530,7 +544,10 @@ const CHANNELS = {
         "midi_import_progress",
 
     comChannel:
-        "midi_com_channel"
+        "midi_com_channel",
+
+    playSong:
+        "play_song"
 };
 
 
@@ -1816,6 +1833,11 @@ async function subscribeToResponses() {
         );
 
 
+        await PatchWorld.subscribeWifi(
+            CHANNELS.playSong
+        );
+
+
         wirelessReady =
             true;
 
@@ -2082,6 +2104,54 @@ PatchWorld.onWifiJolt =
         value
     ) {
 
+
+        if (
+            channel ===
+            CHANNELS.playSong
+        ) {
+
+            const requestedSong =
+                Math.floor(
+                    Number(
+                        value
+                    )
+                );
+
+            if (
+                !Number.isFinite(
+                    requestedSong
+                ) ||
+                requestedSong < 0
+            ) {
+                return;
+            }
+
+            if (requestedSong === 0) {
+                if (typeof playerStopPlayback === "function") {
+                    playerStopPlayback();
+                }
+                return;
+            }
+
+            const select = document.getElementById("fileSelect");
+            if (!select || select.options.length === 0 || select.disabled) {
+                return;
+            }
+
+            const targetIndex = requestedSong - 1;
+            if (targetIndex >= 0 && targetIndex < select.options.length) {
+                select.selectedIndex = targetIndex;
+                
+                // Trigger the load automatically, then play
+                loadMidiFile('repo').then(() => {
+                    if (typeof playerStartPlayback === "function") {
+                        playerStartPlayback();
+                    }
+                }).catch(e => console.error(e));
+            }
+
+            return;
+        }
 
         if (
             channel ===
@@ -2756,6 +2826,7 @@ const TRACK_COLORS = [
 
 
 let playerState = "stopped";
+let playerLoopEnabled = true;
 
 let playerStartTime = 0;
 
@@ -3360,6 +3431,11 @@ function playerLoop() {
 
         playerStopPlayback();
 
+        if (playerLoopEnabled) {
+            playerStartPlayback();
+            return;
+        }
+
         document.getElementById(
             "playerStatus"
         ).textContent =
@@ -3797,6 +3873,21 @@ document.getElementById(
 ).addEventListener(
     "click",
     playerStopPlayback
+);
+
+
+document.getElementById(
+    "btnLoop"
+).addEventListener(
+    "click",
+    function() {
+        playerLoopEnabled = !playerLoopEnabled;
+        if (playerLoopEnabled) {
+            this.classList.add("active-loop");
+        } else {
+            this.classList.remove("active-loop");
+        }
+    }
 );
 
 
