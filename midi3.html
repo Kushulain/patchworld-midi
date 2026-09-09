@@ -122,12 +122,17 @@
 <div class="section">
 
     <div>
-        <span class="label">MIDI file:</span>
+        <span class="label">MIDI file from repo:</span>
     </div>
 
     <select id="fileSelect" disabled>
         <option>Loading MIDI directory...</option>
     </select>
+
+    <div style="margin-top: 15px;">
+        <span class="label">Or custom MIDI URL:</span>
+    </div>
+    <input type="text" id="customUrl" placeholder="https://example.com/file.mid" style="font-size: 18px; padding: 10px 18px; margin-top: 10px; min-width: 320px; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px;">
 
     <br>
 
@@ -280,10 +285,10 @@
 // CONFIGURATION
 // =============================================================
 
-const GITHUB_OWNER =
-    "tmgsabide";
+let GITHUB_OWNER =
+    "kushulain";
 
-const GITHUB_REPOSITORY =
+let GITHUB_REPOSITORY =
     "patchworld-midi";
 
 const GITHUB_BRANCH =
@@ -292,6 +297,14 @@ const GITHUB_BRANCH =
 const MIDI_FOLDER =
     "midi";
 
+// Dynamically detect GitHub Pages URL to support forks
+if (window.location.hostname.endsWith(".github.io")) {
+    GITHUB_OWNER = window.location.hostname.split(".")[0];
+    const pathParts = window.location.pathname.split("/");
+    if (pathParts.length > 1 && pathParts[1]) {
+        GITHUB_REPOSITORY = pathParts[1];
+    }
+}
 
 const GITHUB_API_URL =
     "https://api.github.com/repos/" +
@@ -302,7 +315,6 @@ const GITHUB_API_URL =
     MIDI_FOLDER +
     "?ref=" +
     GITHUB_BRANCH;
-
 
 const MIDI_BASE_URL =
     "https://" +
@@ -1318,13 +1330,24 @@ async function loadMidiFile() {
         document.getElementById(
             "fileSelect"
         );
+        
+    const customUrlInput =
+        document.getElementById(
+            "customUrl"
+        );
 
-    const filename =
-        select.value;
-
-
-    if (!filename) {
-        return;
+    let filename = "";
+    let url = "";
+    
+    if (customUrlInput && customUrlInput.value.trim() !== "") {
+        url = customUrlInput.value.trim();
+        filename = "Custom URL";
+    } else {
+        filename = select.value;
+        if (!filename) {
+            return;
+        }
+        url = MIDI_BASE_URL + encodeURI(filename) + "?t=" + Date.now();
     }
 
 
@@ -1357,19 +1380,6 @@ async function loadMidiFile() {
 
 
     try {
-
-        const url =
-
-            MIDI_BASE_URL +
-
-            encodeURI(
-                filename
-            ) +
-
-            "?t=" +
-
-            Date.now();
-
 
         const response =
             await fetch(
