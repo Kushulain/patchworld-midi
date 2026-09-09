@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Patchworld Direct MIDI Importer</title>
+    <title>Patchworld MIDI Importer & Player</title>
 
     <style>
         body {
@@ -86,6 +86,118 @@
 
         .value {
             font-family: monospace;
+        }
+
+        /* ============ PLAYER ============ */
+
+        #playerSection {
+            display: none;
+        }
+
+        .player-transport {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .player-transport button {
+            font-size: 20px;
+            padding: 8px 16px;
+            margin: 0;
+            min-width: 50px;
+            cursor: pointer;
+            background: #444;
+            color: #eee;
+            border: 1px solid #666;
+            border-radius: 4px;
+        }
+
+        .player-transport button:hover {
+            background: #555;
+        }
+
+        .player-transport button:disabled {
+            opacity: 0.4;
+            cursor: default;
+        }
+
+        #playerTime {
+            font-family: monospace;
+            font-size: 18px;
+            min-width: 140px;
+            text-align: center;
+        }
+
+        #playerTimeline {
+            flex: 1;
+            height: 24px;
+            cursor: pointer;
+            accent-color: #69d36f;
+        }
+
+        #playerStatus {
+            font-size: 14px;
+            color: #aaa;
+            margin-bottom: 6px;
+        }
+
+        /* ============ TRACK VIEW ============ */
+
+        #trackView {
+            margin-top: 14px;
+            overflow-x: auto;
+        }
+
+        .track-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+            height: 28px;
+        }
+
+        .track-label {
+            min-width: 220px;
+            max-width: 220px;
+            font-size: 13px;
+            font-family: monospace;
+            padding-right: 10px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            flex-shrink: 0;
+        }
+
+        .track-bar-container {
+            flex: 1;
+            height: 22px;
+            background: #1a1a1a;
+            border-radius: 3px;
+            position: relative;
+            overflow: hidden;
+            min-width: 300px;
+        }
+
+        .track-note-block {
+            position: absolute;
+            top: 2px;
+            height: 18px;
+            border-radius: 2px;
+            opacity: 0.7;
+        }
+
+        .track-playhead {
+            position: absolute;
+            top: 0;
+            width: 2px;
+            height: 100%;
+            background: #ffffff;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .track-bar-container.active .track-note-block {
+            opacity: 1.0;
         }
     </style>
 </head>
@@ -263,6 +375,48 @@
     </div>
 
     <pre id="preview">No MIDI loaded yet.</pre>
+
+</div>
+
+
+<div id="playerSection" class="section">
+
+    <div class="label" style="margin-bottom: 8px;">
+        MIDI Live Player
+    </div>
+
+    <div id="playerStatus">
+        No MIDI loaded.
+    </div>
+
+    <div class="player-transport">
+
+        <button id="btnPlay" disabled>
+            ▶
+        </button>
+
+        <button id="btnPause" disabled>
+            ⏸
+        </button>
+
+        <button id="btnStop" disabled>
+            ⏹
+        </button>
+
+        <input type="range"
+            id="playerTimeline"
+            min="0" max="1000" value="0"
+            step="1"
+            disabled>
+
+        <span id="playerTime">
+            0:00 / 0:00
+        </span>
+
+    </div>
+
+    <div id="trackView">
+    </div>
 
 </div>
 
@@ -545,6 +699,25 @@ function clearMidiDisplay() {
         "No MIDI loaded yet.";
 
     updateImportButton();
+
+
+    // Reset player
+
+    if (
+        typeof playerStopPlayback ===
+        "function"
+    ) {
+        playerStopPlayback();
+    }
+
+    document.getElementById(
+        "playerSection"
+    ).style.display =
+        "none";
+
+    document.getElementById(
+        "trackView"
+    ).innerHTML = "";
 }
 
 
@@ -1553,6 +1726,11 @@ async function loadMidiFile() {
             "Binary MIDI parsed successfully."
         );
 
+
+        onMidiLoadedForPlayer(
+            midi
+        );
+
     }
 
     catch (error) {
@@ -2537,6 +2715,1098 @@ document.getElementById(
 
         stopImport(
             "Import aborted by user."
+        );
+    }
+);
+
+
+// =============================================================
+// MIDI LIVE PLAYER — STATE
+// =============================================================
+
+const TRACK_COLORS = [
+    "#e06c75",
+    "#61afef",
+    "#98c379",
+    "#e5c07b",
+    "#c678dd",
+    "#56b6c2",
+    "#d19a66",
+    "#be5046",
+    "#7ec8e3",
+    "#f0e68c",
+    "#dda0dd",
+    "#87ceeb",
+    "#ff7f50",
+    "#3cb371",
+    "#ff69b4",
+    "#00ced1"
+];
+
+
+let playerState = "stopped";
+
+let playerStartTime = 0;
+
+let playerCurrentTime = 0;
+
+let playerPauseTime = 0;
+
+let playerDuration = 0;
+
+let playerNextEventIndex = 0;
+
+let playerAnimFrame = null;
+
+let playerMidiObject = null;
+
+let playerTrackInfos = [];
+
+let activeNotes = new Set();
+
+
+// =============================================================
+// MIDI LIVE PLAYER — FORMAT TIME
+// =============================================================
+
+function formatTime(seconds) {
+
+    const m =
+        Math.floor(
+            seconds / 60
+        );
+
+    const s =
+        Math.floor(
+            seconds % 60
+        );
+
+    return (
+        m +
+        ":" +
+        String(s).padStart(
+            2,
+            "0"
+        )
+    );
+}
+
+
+// =============================================================
+// MIDI LIVE PLAYER — BUILD TRACK VIEW
+// =============================================================
+
+function buildTrackView(midi) {
+
+    const container =
+        document.getElementById(
+            "trackView"
+        );
+
+    container.innerHTML = "";
+
+    playerTrackInfos = [];
+
+
+    if (
+        !midi ||
+        !midi.tracks
+    ) {
+        return;
+    }
+
+
+    const duration =
+        midi.duration;
+
+    if (
+        duration <= 0
+    ) {
+        return;
+    }
+
+
+    midi.tracks.forEach(
+        function(
+            track,
+            trackIndex
+        ) {
+
+            if (
+                track.notes.length === 0
+            ) {
+                return;
+            }
+
+
+            const channelId =
+                trackIndex + 1;
+
+            const color =
+                TRACK_COLORS[
+                    trackIndex %
+                    TRACK_COLORS.length
+                ];
+
+            const instrumentName =
+                (
+                    track.instrument &&
+                    track.instrument.name
+                )
+                ? track.instrument.name
+                : (
+                    track.name ||
+                    "Track " +
+                    trackIndex
+                );
+
+
+            const row =
+                document.createElement(
+                    "div"
+                );
+
+            row.className =
+                "track-row";
+
+
+            // ---- Label ----
+
+            const label =
+                document.createElement(
+                    "div"
+                );
+
+            label.className =
+                "track-label";
+
+            label.style.color =
+                color;
+
+            label.textContent =
+                "CH " +
+                channelId +
+                " — " +
+                instrumentName;
+
+            label.title =
+                "Wireless Channel: " +
+                channelId +
+                " | Track: " +
+                trackIndex +
+                " | MIDI Ch: " +
+                track.channel +
+                " | Notes: " +
+                track.notes.length;
+
+
+            // ---- Bar container ----
+
+            const barContainer =
+                document.createElement(
+                    "div"
+                );
+
+            barContainer.className =
+                "track-bar-container";
+
+            barContainer.id =
+                "trackBar_" +
+                trackIndex;
+
+
+            // ---- Note density blocks ----
+            // Group notes into time buckets
+            // to show activity regions
+
+            const bucketCount = 200;
+
+            const bucketSize =
+                duration / bucketCount;
+
+            const buckets =
+                new Uint8Array(
+                    bucketCount
+                );
+
+
+            track.notes.forEach(
+                function(note) {
+
+                    const startBucket =
+                        Math.floor(
+                            note.time /
+                            bucketSize
+                        );
+
+                    const endBucket =
+                        Math.min(
+                            bucketCount - 1,
+                            Math.floor(
+                                (
+                                    note.time +
+                                    note.duration
+                                ) /
+                                bucketSize
+                            )
+                        );
+
+                    for (
+                        let b = startBucket;
+                        b <= endBucket;
+                        b++
+                    ) {
+                        buckets[b] = 1;
+                    }
+                }
+            );
+
+
+            // Merge consecutive active
+            // buckets into blocks
+
+            let blockStart = -1;
+
+            for (
+                let b = 0;
+                b <= bucketCount;
+                b++
+            ) {
+
+                if (
+                    b < bucketCount &&
+                    buckets[b] === 1
+                ) {
+
+                    if (
+                        blockStart === -1
+                    ) {
+                        blockStart = b;
+                    }
+
+                } else {
+
+                    if (
+                        blockStart !== -1
+                    ) {
+
+                        const block =
+                            document.createElement(
+                                "div"
+                            );
+
+                        block.className =
+                            "track-note-block";
+
+                        const leftPct =
+                            (
+                                blockStart /
+                                bucketCount
+                            ) * 100;
+
+                        const widthPct =
+                            (
+                                (b - blockStart) /
+                                bucketCount
+                            ) * 100;
+
+                        block.style.left =
+                            leftPct + "%";
+
+                        block.style.width =
+                            Math.max(
+                                widthPct,
+                                0.3
+                            ) + "%";
+
+                        block.style.backgroundColor =
+                            color;
+
+                        barContainer.appendChild(
+                            block
+                        );
+
+
+                        blockStart = -1;
+                    }
+                }
+            }
+
+
+            // ---- Playhead ----
+
+            const playhead =
+                document.createElement(
+                    "div"
+                );
+
+            playhead.className =
+                "track-playhead";
+
+            playhead.style.left =
+                "0%";
+
+            barContainer.appendChild(
+                playhead
+            );
+
+
+            // ---- Assemble row ----
+
+            row.appendChild(
+                label
+            );
+
+            row.appendChild(
+                barContainer
+            );
+
+            container.appendChild(
+                row
+            );
+
+
+            playerTrackInfos.push({
+
+                trackIndex:
+                    trackIndex,
+
+                channelId:
+                    channelId,
+
+                color:
+                    color,
+
+                instrumentName:
+                    instrumentName,
+
+                barContainer:
+                    barContainer,
+
+                playhead:
+                    playhead
+            });
+        }
+    );
+}
+
+
+// =============================================================
+// MIDI LIVE PLAYER — UPDATE PLAYER UI
+// =============================================================
+
+function updatePlayerUI() {
+
+    const hasEvents =
+        parsedEvents.length > 0;
+
+    const canPlay =
+        hasEvents &&
+        bridgeReady &&
+        playerState !== "playing";
+
+    const canPause =
+        playerState === "playing";
+
+    const canStop =
+        playerState !== "stopped";
+
+
+    document.getElementById(
+        "btnPlay"
+    ).disabled =
+        !canPlay;
+
+    document.getElementById(
+        "btnPause"
+    ).disabled =
+        !canPause;
+
+    document.getElementById(
+        "btnStop"
+    ).disabled =
+        !canStop;
+
+    document.getElementById(
+        "playerTimeline"
+    ).disabled =
+        !hasEvents;
+
+    document.getElementById(
+        "playerSection"
+    ).style.display =
+        hasEvents
+        ? "block"
+        : "none";
+}
+
+
+// =============================================================
+// MIDI LIVE PLAYER — SEND ALL NOTES OFF
+// =============================================================
+
+async function sendAllNotesOff() {
+
+    // Send Note_OFF for every
+    // actively playing note
+
+    for (
+        const key
+        of activeNotes
+    ) {
+
+        const parts =
+            key.split("_");
+
+        const pitch =
+            Number(
+                parts[0]
+            );
+
+        const ch =
+            Number(
+                parts[1]
+            );
+
+
+        try {
+
+            await PatchWorld.sendWirelessJolt(
+                "Note_OFF",
+                pitch,
+                ch
+            );
+
+        } catch (e) {
+            // best effort
+        }
+    }
+
+
+    activeNotes.clear();
+
+
+    // Also broadcast a
+    // global All_Notes_OFF
+
+    try {
+
+        await PatchWorld.sendWirelessJolt(
+            "All_Notes_OFF",
+            0,
+            0
+        );
+
+    } catch (e) {
+        // best effort
+    }
+}
+
+
+// =============================================================
+// MIDI LIVE PLAYER — SEND EVENT
+// =============================================================
+
+function sendPlayerEvent(event) {
+
+    const ch =
+        event.sourceTrack + 1;
+
+    if (
+        event.type === 0
+    ) {
+
+        // NOTE ON:
+        // Send Note_ON (pitch) then
+        // Note_Velocity (velocity)
+
+        const noteKey =
+            event.data1 +
+            "_" +
+            ch;
+
+        activeNotes.add(
+            noteKey
+        );
+
+
+        PatchWorld.sendWirelessJolt(
+            "Note_ON",
+            event.data1,
+            ch
+        ).catch(
+            function() {}
+        );
+
+
+        PatchWorld.sendWirelessJolt(
+            "Note_Velocity",
+            event.data2,
+            ch
+        ).catch(
+            function() {}
+        );
+
+    }
+
+    else if (
+        event.type === 1
+    ) {
+
+        // NOTE OFF:
+        // Send Note_OFF (pitch)
+
+        const noteKey =
+            event.data1 +
+            "_" +
+            ch;
+
+        activeNotes.delete(
+            noteKey
+        );
+
+
+        PatchWorld.sendWirelessJolt(
+            "Note_OFF",
+            event.data1,
+            ch
+        ).catch(
+            function() {}
+        );
+    }
+}
+
+
+// =============================================================
+// MIDI LIVE PLAYER — UPDATE PLAYHEADS
+// =============================================================
+
+function updatePlayheads(
+    currentTime
+) {
+
+    if (
+        playerDuration <= 0
+    ) {
+        return;
+    }
+
+
+    const pct =
+        (
+            currentTime /
+            playerDuration
+        ) * 100;
+
+
+    for (
+        let i = 0;
+        i < playerTrackInfos.length;
+        i++
+    ) {
+
+        playerTrackInfos[i]
+            .playhead
+            .style
+            .left =
+                pct + "%";
+    }
+}
+
+
+// =============================================================
+// MIDI LIVE PLAYER — PLAYBACK LOOP
+// =============================================================
+
+function playerLoop() {
+
+    if (
+        playerState !== "playing"
+    ) {
+        return;
+    }
+
+
+    const now =
+        performance.now();
+
+    playerCurrentTime =
+        (
+            now -
+            playerStartTime
+        ) / 1000;
+
+
+    if (
+        playerCurrentTime >=
+        playerDuration
+    ) {
+
+        playerCurrentTime =
+            playerDuration;
+
+        playerStopPlayback();
+
+        document.getElementById(
+            "playerStatus"
+        ).textContent =
+            "Playback finished.";
+
+        updatePlayerUI();
+
+        return;
+    }
+
+
+    // Fire events that are
+    // due at this time
+
+    while (
+        playerNextEventIndex <
+        parsedEvents.length
+    ) {
+
+        const event =
+            parsedEvents[
+                playerNextEventIndex
+            ];
+
+
+        if (
+            event.time >
+            playerCurrentTime
+        ) {
+            break;
+        }
+
+
+        sendPlayerEvent(
+            event
+        );
+
+
+        playerNextEventIndex++;
+    }
+
+
+    // Update timeline slider
+
+    const slider =
+        document.getElementById(
+            "playerTimeline"
+        );
+
+    slider.value =
+        Math.round(
+            (
+                playerCurrentTime /
+                playerDuration
+            ) * 1000
+        );
+
+
+    // Update time display
+
+    document.getElementById(
+        "playerTime"
+    ).textContent =
+        formatTime(
+            playerCurrentTime
+        ) +
+        " / " +
+        formatTime(
+            playerDuration
+        );
+
+
+    // Update playheads
+
+    updatePlayheads(
+        playerCurrentTime
+    );
+
+
+    // Next frame
+
+    playerAnimFrame =
+        requestAnimationFrame(
+            playerLoop
+        );
+}
+
+
+// =============================================================
+// MIDI LIVE PLAYER — PLAY / PAUSE / STOP
+// =============================================================
+
+function playerStartPlayback() {
+
+    if (
+        parsedEvents.length === 0
+    ) {
+        return;
+    }
+
+
+    if (
+        playerState === "paused"
+    ) {
+
+        // Resume from pause
+
+        const pauseOffset =
+            playerPauseTime * 1000;
+
+        playerStartTime =
+            performance.now() -
+            pauseOffset;
+
+    }
+
+    else {
+
+        // Fresh start
+
+        playerNextEventIndex =
+            0;
+
+        playerStartTime =
+            performance.now();
+
+        playerPauseTime =
+            0;
+    }
+
+
+    playerState =
+        "playing";
+
+
+    document.getElementById(
+        "playerStatus"
+    ).textContent =
+        "Playing...";
+
+    updatePlayerUI();
+
+
+    playerAnimFrame =
+        requestAnimationFrame(
+            playerLoop
+        );
+}
+
+
+function playerPausePlayback() {
+
+    if (
+        playerState !== "playing"
+    ) {
+        return;
+    }
+
+
+    playerState =
+        "paused";
+
+
+    playerPauseTime =
+        playerCurrentTime;
+
+
+    cancelAnimationFrame(
+        playerAnimFrame
+    );
+
+
+    sendAllNotesOff();
+
+
+    document.getElementById(
+        "playerStatus"
+    ).textContent =
+        "Paused at " +
+        formatTime(
+            playerCurrentTime
+        );
+
+
+    updatePlayerUI();
+}
+
+
+function playerStopPlayback() {
+
+    cancelAnimationFrame(
+        playerAnimFrame
+    );
+
+
+    playerState =
+        "stopped";
+
+    playerCurrentTime =
+        0;
+
+    playerPauseTime =
+        0;
+
+    playerNextEventIndex =
+        0;
+
+
+    sendAllNotesOff();
+
+
+    const slider =
+        document.getElementById(
+            "playerTimeline"
+        );
+
+    slider.value = 0;
+
+
+    document.getElementById(
+        "playerTime"
+    ).textContent =
+        formatTime(0) +
+        " / " +
+        formatTime(
+            playerDuration
+        );
+
+
+    updatePlayheads(0);
+
+
+    document.getElementById(
+        "playerStatus"
+    ).textContent =
+        "Stopped.";
+
+
+    updatePlayerUI();
+}
+
+
+// =============================================================
+// MIDI LIVE PLAYER — SEEK
+// =============================================================
+
+function playerSeek(
+    targetTime
+) {
+
+    const wasPlaying =
+        playerState === "playing";
+
+
+    // Stop sending notes first
+
+    cancelAnimationFrame(
+        playerAnimFrame
+    );
+
+
+    sendAllNotesOff();
+
+
+    // Clamp target
+
+    targetTime =
+        Math.max(
+            0,
+            Math.min(
+                targetTime,
+                playerDuration
+            )
+        );
+
+
+    playerCurrentTime =
+        targetTime;
+
+    playerPauseTime =
+        targetTime;
+
+
+    // Find the next event index
+    // after targetTime
+
+    playerNextEventIndex = 0;
+
+    while (
+        playerNextEventIndex <
+        parsedEvents.length &&
+
+        parsedEvents[
+            playerNextEventIndex
+        ].time <=
+        targetTime
+    ) {
+
+        playerNextEventIndex++;
+    }
+
+
+    // Update UI
+
+    document.getElementById(
+        "playerTime"
+    ).textContent =
+        formatTime(
+            targetTime
+        ) +
+        " / " +
+        formatTime(
+            playerDuration
+        );
+
+
+    updatePlayheads(
+        targetTime
+    );
+
+
+    // Resume if was playing
+
+    if (wasPlaying) {
+
+        playerStartTime =
+            performance.now() -
+            (targetTime * 1000);
+
+        playerState =
+            "playing";
+
+        playerAnimFrame =
+            requestAnimationFrame(
+                playerLoop
+            );
+
+    } else {
+
+        playerState =
+            "paused";
+
+        document.getElementById(
+            "playerStatus"
+        ).textContent =
+            "Seeked to " +
+            formatTime(
+                targetTime
+            );
+
+        updatePlayerUI();
+    }
+}
+
+
+// =============================================================
+// MIDI LIVE PLAYER — ON MIDI LOADED
+// =============================================================
+
+function onMidiLoadedForPlayer(
+    midi
+) {
+
+    playerMidiObject =
+        midi;
+
+    playerDuration =
+        midi.duration;
+
+
+    playerStopPlayback();
+
+
+    buildTrackView(
+        midi
+    );
+
+
+    document.getElementById(
+        "playerSection"
+    ).style.display =
+        "block";
+
+
+    document.getElementById(
+        "playerStatus"
+    ).textContent =
+        "Ready — " +
+        playerTrackInfos.length +
+        " track" +
+        (
+            playerTrackInfos.length === 1
+            ? ""
+            : "s"
+        ) +
+        " with notes.";
+
+
+    document.getElementById(
+        "playerTime"
+    ).textContent =
+        formatTime(0) +
+        " / " +
+        formatTime(
+            playerDuration
+        );
+
+
+    updatePlayerUI();
+}
+
+
+// =============================================================
+// MIDI LIVE PLAYER — UI EVENTS
+// =============================================================
+
+document.getElementById(
+    "btnPlay"
+).addEventListener(
+    "click",
+    playerStartPlayback
+);
+
+
+document.getElementById(
+    "btnPause"
+).addEventListener(
+    "click",
+    playerPausePlayback
+);
+
+
+document.getElementById(
+    "btnStop"
+).addEventListener(
+    "click",
+    playerStopPlayback
+);
+
+
+document.getElementById(
+    "playerTimeline"
+).addEventListener(
+
+    "input",
+
+    function() {
+
+        const ratio =
+            Number(
+                this.value
+            ) / 1000;
+
+        const targetTime =
+            ratio *
+            playerDuration;
+
+
+        playerSeek(
+            targetTime
         );
     }
 );
