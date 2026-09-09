@@ -233,24 +233,33 @@
 
 <div class="section">
 
+    <div style="margin-bottom: 15px;">
+        <div style="margin-bottom: 6px;">
+            <span class="label">MIDI file from repo:</span>
+        </div>
+        <div style="display: flex; align-items: center; flex-wrap: wrap;">
+            <select id="fileSelect" disabled style="margin-top: 0;">
+                <option>Loading MIDI directory...</option>
+            </select>
+            <button id="loadRepoButton" disabled style="margin-top: 0;">
+                Load Repo File
+            </button>
+        </div>
+    </div>
+
     <div>
-        <span class="label">MIDI file from repo:</span>
+        <div style="margin-bottom: 6px;">
+            <span class="label">Or custom MIDI URL:</span>
+        </div>
+        <div style="display: flex; align-items: center; flex-wrap: wrap;">
+            <input type="text" id="customUrl" placeholder="https://example.com/file.mid" style="font-size: 18px; padding: 10px 18px; min-width: 320px; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px; margin-right: 8px;">
+            <button id="loadUrlButton" style="margin-top: 0;">
+                Load Custom URL
+            </button>
+        </div>
     </div>
-
-    <select id="fileSelect" disabled>
-        <option>Loading MIDI directory...</option>
-    </select>
-
-    <div style="margin-top: 15px;">
-        <span class="label">Or custom MIDI URL:</span>
-    </div>
-    <input type="text" id="customUrl" placeholder="https://example.com/file.mid" style="font-size: 18px; padding: 10px 18px; margin-top: 10px; min-width: 320px; background: #333; color: #eee; border: 1px solid #555; border-radius: 4px;">
 
     <br>
-
-    <button id="loadButton" disabled>
-        Load and Parse MIDI
-    </button>
 
     <button id="importButton" disabled>
         Start Import
@@ -814,7 +823,7 @@ async function loadMidiDirectory() {
 
     const loadButton =
         document.getElementById(
-            "loadButton"
+            "loadRepoButton"
         );
 
 
@@ -920,7 +929,7 @@ async function loadMidiDirectory() {
             select.disabled =
                 true;
 
-            loadButton.disabled =
+            if (loadButton) loadButton.disabled =
                 true;
 
 
@@ -958,7 +967,7 @@ async function loadMidiDirectory() {
         select.disabled =
             false;
 
-        loadButton.disabled =
+        if (loadButton) loadButton.disabled =
             false;
 
 
@@ -995,7 +1004,7 @@ async function loadMidiDirectory() {
         select.disabled =
             true;
 
-        loadButton.disabled =
+        if (loadButton) loadButton.disabled =
             true;
 
 
@@ -1497,7 +1506,7 @@ function updateWriteCount() {
 // LOAD BINARY MIDI
 // =============================================================
 
-async function loadMidiFile() {
+async function loadMidiFile(source) {
 
     const select =
         document.getElementById(
@@ -1512,7 +1521,8 @@ async function loadMidiFile() {
     let filename = "";
     let url = "";
     
-    if (customUrlInput && customUrlInput.value.trim() !== "") {
+    if (source === 'url') {
+        if (!customUrlInput || customUrlInput.value.trim() === "") return;
         url = customUrlInput.value.trim();
         filename = "Custom URL";
     } else {
@@ -1524,14 +1534,11 @@ async function loadMidiFile() {
     }
 
 
-    const button =
-        document.getElementById(
-            "loadButton"
-        );
+    const btnRepo = document.getElementById("loadRepoButton");
+    const btnUrl = document.getElementById("loadUrlButton");
 
-
-    button.disabled =
-        true;
+    if (btnRepo) btnRepo.disabled = true;
+    if (btnUrl) btnUrl.disabled = true;
 
 
     resetImportStats();
@@ -1766,8 +1773,8 @@ async function loadMidiFile() {
 
     finally {
 
-        button.disabled =
-            false;
+        if (btnRepo) btnRepo.disabled = false;
+        if (btnUrl) btnUrl.disabled = false;
 
 
         updateImportButton();
@@ -2486,10 +2493,11 @@ function startImport() {
         true;
 
 
-    document.getElementById(
-        "loadButton"
-    ).disabled =
-        true;
+    const btnRepo = document.getElementById("loadRepoButton");
+    if (btnRepo) btnRepo.disabled = true;
+
+    const btnUrl = document.getElementById("loadUrlButton");
+    if (btnUrl) btnUrl.disabled = true;
 
 
     document.getElementById(
@@ -2611,10 +2619,11 @@ function restoreControls() {
         true;
 
 
-    document.getElementById(
-        "loadButton"
-    ).disabled =
-        false;
+    const btnRepo = document.getElementById("loadRepoButton");
+    if (btnRepo) btnRepo.disabled = false;
+
+    const btnUrl = document.getElementById("loadUrlButton");
+    if (btnUrl) btnUrl.disabled = false;
 
 
     document.getElementById(
@@ -2690,10 +2699,17 @@ document.getElementById(
 
 
 document.getElementById(
-    "loadButton"
+    "loadRepoButton"
 ).addEventListener(
     "click",
-    loadMidiFile
+    function() { loadMidiFile('repo'); }
+);
+
+document.getElementById(
+    "loadUrlButton"
+).addEventListener(
+    "click",
+    function() { loadMidiFile('url'); }
 );
 
 
@@ -2848,17 +2864,19 @@ function buildTrackView(midi) {
                     TRACK_COLORS.length
                 ];
 
-            const instrumentName =
-                (
-                    track.instrument &&
-                    track.instrument.name
-                )
-                ? track.instrument.name
-                : (
-                    track.name ||
-                    "Track " +
-                    trackIndex
-                );
+            let instrumentName = "";
+            const tName = track.name ? track.name.trim() : "";
+            const iName = (track.instrument && track.instrument.name) ? track.instrument.name.trim() : "";
+
+            if (tName && iName && tName.toLowerCase() !== iName.toLowerCase()) {
+                instrumentName = tName + " [" + iName + "]";
+            } else if (tName) {
+                instrumentName = tName;
+            } else if (iName) {
+                instrumentName = iName;
+            } else {
+                instrumentName = "Track " + trackIndex;
+            }
 
 
             const row =
